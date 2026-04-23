@@ -1,0 +1,13 @@
+.codex
+.codex/
+
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/android/**/build/
+frontend/android/captures/
+
+.DS_Store
