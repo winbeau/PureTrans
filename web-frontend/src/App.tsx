@@ -7,6 +7,7 @@ import { CheckTranslationPage } from './pages/CheckTranslationPage';
 import { CompareTranslatePage } from './pages/CompareTranslatePage';
 import { DirectTranslatePage } from './pages/DirectTranslatePage';
 import { KnowledgeTranslatePage } from './pages/KnowledgeTranslatePage';
+import { LandingPage } from './pages/LandingPage';
 
 type ActiveTab = 'kb' | 'direct' | 'compare' | 'check';
 type BackendStatus = 'checking' | 'online' | 'offline';
@@ -19,6 +20,16 @@ const tabs: TabItem<ActiveTab>[] = [
 ];
 
 function App() {
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+
+  if (pathname === '/demo') {
+    return <DemoApp />;
+  }
+
+  return <LandingPage />;
+}
+
+function DemoApp() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('kb');
   const [backendStatus, setBackendStatus] = useState<BackendStatus>('checking');
   const apiBaseUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://124.71.228.242:8000', []);
