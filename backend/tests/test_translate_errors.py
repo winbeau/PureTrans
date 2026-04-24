@@ -108,7 +108,7 @@ def test_dify_invalid_json_returns_bad_response(dify_env: None, respx_mock) -> N
 def test_missing_dify_api_key_returns_configuration_error(
     monkeypatch, dify_env: None
 ) -> None:
-    monkeypatch.delenv("DIFY_DIRECT_TRANSLATE_API_KEY")
+    monkeypatch.setenv("DIFY_DIRECT_TRANSLATE_API_KEY", "")
     get_settings.cache_clear()
     client = TestClient(create_app())
 
