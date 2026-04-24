@@ -308,6 +308,12 @@ pnpm cap sync android
 pnpm cap run android
 ```
 
+React web demo (`web-frontend/`) package manager:
+
+- Use `pnpm` only for install/build/dev commands in `web-frontend/`.
+- Do not use `npm install` or create `package-lock.json` for `web-frontend/`.
+- Expected commands are `pnpm install`, `pnpm dev`, and `pnpm build`.
+
 Android build note:
 
 - If `./gradlew assembleDebug` tries to download Gradle and times out, prefer the system `gradle assembleDebug` when `gradle --version` reports Gradle 8.7, because it matches the current wrapper requirement.
