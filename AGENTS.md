@@ -388,6 +388,24 @@ fix(android): 修复 Capacitor 首页在真机上的安全区偏移
 docs(project): 补充 commit message 规范
 ```
 
+## Agent Review And Commit Gate
+
+- Repository changes that modify product behavior should follow a fixed two-agent flow:
+  - `coder agent`: implements the change
+  - `critical agent`: performs an independent blocking review
+- The `critical agent` is a read-only reviewer by default. It should not implement features or create commits.
+- The `critical agent` review must end with exactly one explicit verdict:
+  - `BLOCKED`: blocking issues remain; commit is not allowed
+  - `APPROVED`: no blocking issues found; commit may proceed
+- If the verdict is `BLOCKED`, route the findings back to the `coder agent`, fix them, and re-run review until the verdict is `APPROVED`.
+- Commit granularity is `Per Approved Change`: each logically approved change should be committed separately after review passes.
+- Do not commit product-facing or behavior-changing work before the following are available:
+  - current diff inspection
+  - relevant build or test result
+  - required device verification evidence when Android behavior is involved
+  - the latest `critical agent` verdict
+- Commit messages still follow the Conventional Commits rules in this document.
+
 ## Agent Workflow
 
 Before making changes:

@@ -22,14 +22,18 @@ import {
   UserRound,
 } from 'lucide-vue-next';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { AuthenticatedUser } from '../../auth/types';
+import type { AuthError, AuthenticatedUser } from '../../auth/types';
 
 
 const props = defineProps<{
   currentUser?: AuthenticatedUser | null;
+  authError?: AuthError | null;
+  isAuthBusy?: boolean;
+  wechatConfigured?: boolean;
 }>();
 
 const emit = defineEmits<{
+  login: [];
   logout: [];
 }>();
 
@@ -105,6 +109,26 @@ const filteredHistory = computed(() => {
   });
 });
 
+const isAuthenticated = computed(() => Boolean(props.currentUser));
+const authStatusLabel = computed(() => (isAuthenticated.value ? '微信已登录' : '游客模式'));
+const authHintText = computed(() => {
+  if (props.authError?.message) {
+    return props.authError.message;
+  }
+
+  if (props.wechatConfigured === false) {
+    return '当前环境未完成微信登录配置，仍可继续以游客模式使用翻译与记录。';
+  }
+
+  return '当前不会同步账号信息，翻译、记录和设置仍可直接使用。';
+});
+const authActionLabel = computed(() => {
+  if (props.isAuthBusy) {
+    return '微信登录中…';
+  }
+
+  return props.wechatConfigured === false ? '微信暂不可用' : '微信登录';
+});
 const accountLocation = computed(() => {
   const segments = [props.currentUser?.city, props.currentUser?.province, props.currentUser?.country].filter(Boolean);
   return segments.join(' · ');
@@ -287,6 +311,10 @@ function clearMockCache(): void {
 function logout(): void {
   closeSettings();
   emit('logout');
+}
+
+function login(): void {
+  emit('login');
 }
 
 watch(inputMode, async (mode) => {
@@ -557,28 +585,75 @@ onBeforeUnmount(() => {
 
           <div class="space-y-2">
             <div
-              v-if="props.currentUser"
-              class="flex items-center gap-3 rounded-2xl border border-github-border bg-white px-4 py-4 dark:border-github-dark-border dark:bg-github-dark-subtle"
+              class="rounded-2xl border border-github-border bg-white px-4 py-4 dark:border-github-dark-border dark:bg-github-dark-subtle"
             >
-              <div
-                v-if="props.currentUser.avatarUrl"
-                class="size-11 overflow-hidden rounded-2xl border border-github-border bg-github-subtle dark:border-github-dark-border dark:bg-github-dark-canvas"
-              >
-                <img :src="props.currentUser.avatarUrl" :alt="props.currentUser.nickname" class="size-full object-cover" />
+              <div class="flex items-center gap-3">
+                <div
+                  v-if="props.currentUser?.avatarUrl"
+                  class="size-11 overflow-hidden rounded-2xl border border-github-border bg-github-subtle dark:border-github-dark-border dark:bg-github-dark-canvas"
+                >
+                  <img :src="props.currentUser.avatarUrl" :alt="props.currentUser.nickname" class="size-full object-cover" />
+                </div>
+                <div
+                  v-else
+                  class="inline-flex size-11 items-center justify-center rounded-2xl border border-github-border bg-github-subtle text-github-muted dark:border-github-dark-border dark:bg-github-dark-canvas dark:text-github-dark-muted"
+                >
+                  <UserRound class="size-5" aria-hidden="true" />
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2">
+                    <p class="truncate text-sm font-medium text-github-fg dark:text-github-dark-fg">
+                      {{ props.currentUser?.nickname ?? '游客模式' }}
+                    </p>
+                    <span
+                      class="inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                      :class="
+                        isAuthenticated
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                          : 'bg-github-subtle text-github-muted dark:bg-github-dark-canvas dark:text-github-dark-muted'
+                      "
+                    >
+                      {{ authStatusLabel }}
+                    </span>
+                  </div>
+                  <p class="truncate text-xs text-github-muted dark:text-github-dark-muted">
+                    {{ props.currentUser ? accountLocation || props.currentUser.openId : '未绑定微信账号' }}
+                  </p>
+                </div>
               </div>
+
               <div
-                v-else
-                class="inline-flex size-11 items-center justify-center rounded-2xl border border-github-border bg-github-subtle text-github-muted dark:border-github-dark-border dark:bg-github-dark-canvas dark:text-github-dark-muted"
+                class="mt-4 rounded-[1.1rem] border px-3.5 py-3"
+                :class="
+                  props.authError
+                    ? 'border-amber-500/25 bg-amber-500/8 dark:border-amber-400/25 dark:bg-amber-500/10'
+                    : 'border-github-border bg-github-subtle dark:border-github-dark-border dark:bg-github-dark-canvas'
+                "
               >
-                <UserRound class="size-5" aria-hidden="true" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <p class="truncate text-sm font-medium text-github-fg dark:text-github-dark-fg">{{ props.currentUser.nickname }}</p>
-                <p class="truncate text-xs text-github-muted dark:text-github-dark-muted">
-                  {{ accountLocation || props.currentUser.openId }}
+                <p class="text-[13px] leading-6 text-github-muted dark:text-github-dark-muted">
+                  {{ authHintText }}
                 </p>
               </div>
             </div>
+
+            <button
+              v-if="!isAuthenticated"
+              type="button"
+              class="flex w-full items-center gap-3 rounded-2xl border border-github-border bg-white px-4 py-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 dark:border-github-dark-border dark:bg-github-dark-subtle"
+              :disabled="props.isAuthBusy || props.wechatConfigured === false"
+              @click="login"
+            >
+              <div class="inline-flex size-10 items-center justify-center rounded-xl bg-github-subtle text-github-muted dark:bg-github-dark-canvas dark:text-github-dark-muted">
+                <UserRound class="size-[18px]" aria-hidden="true" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">{{ authActionLabel }}</p>
+                <p class="text-xs text-github-muted dark:text-github-dark-muted">
+                  {{ props.wechatConfigured === false ? '完成后端与微信配置后可绑定账号' : '手动发起微信授权，不影响游客继续使用' }}
+                </p>
+              </div>
+              <ChevronRight class="size-4 shrink-0 text-github-muted dark:text-github-dark-muted" aria-hidden="true" />
+            </button>
 
             <button
               type="button"
@@ -663,7 +738,7 @@ onBeforeUnmount(() => {
             </button>
 
             <button
-              v-if="props.currentUser"
+              v-if="isAuthenticated"
               type="button"
               class="flex w-full items-center gap-3 rounded-2xl border border-github-border bg-white px-4 py-4 text-left dark:border-github-dark-border dark:bg-github-dark-subtle"
               @click="logout"

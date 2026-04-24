@@ -1,4 +1,8 @@
-# React Web 演示前端 systemd 部署
+# React Web 演示前端 systemd 部署（不推荐）
+
+> 当前实际部署已改为 Nginx 直接托管 `web-frontend/dist/` 静态文件。
+> 新部署和问题排查优先参考 `docs/deploy/web-frontend-nginx-experience.md`。
+> 本文仅保留为历史方案记录。
 
 本文把 `web-frontend/` 固定为一套可长期重启、可巡检、可复现的服务器部署方式。
 
