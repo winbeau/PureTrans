@@ -7,3 +7,7 @@ class AppError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
+
+
+class UnifiedApiError(AppError):
+    """App error that should use the public v1 unified response envelope."""

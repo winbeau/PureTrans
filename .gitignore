@@ -11,8 +11,11 @@ frontend/android/local.properties
 frontend/android/**/build/
 frontend/android/captures/
 
+keystore/
+
 backend/.env.local
 backend/.env.production.local
+backend/.env
 backend/**/__pycache__/
 
 .DS_Store
