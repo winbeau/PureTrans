@@ -1,0 +1,17 @@
+[Unit]
+Description=PureTrans React Web Frontend
+After=network.target puretrans-backend.service
+Wants=puretrans-backend.service
+
+[Service]
+Type=simple
+User=puretrans
+Group=puretrans
+WorkingDirectory=/opt/puretrans/web-frontend
+ExecStart=/usr/bin/env pnpm preview --host 0.0.0.0 --port 5174
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
