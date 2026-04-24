@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
+import { Keyboard as CapacitorKeyboard } from '@capacitor/keyboard';
 import {
   ChevronLeft,
   ChevronRight,
@@ -7,6 +9,7 @@ import {
   Database,
   Inbox,
   Keyboard,
+  LogOut,
   Mic,
   Moon,
   Search,
@@ -16,9 +19,19 @@ import {
   Sun,
   Trash2,
   X,
-  Braces,
+  UserRound,
 } from 'lucide-vue-next';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { AuthenticatedUser } from '../../auth/types';
+
+
+const props = defineProps<{
+  currentUser?: AuthenticatedUser | null;
+}>();
+
+const emit = defineEmits<{
+  logout: [];
+}>();
 
 type InputMode = 'voice' | 'text';
 
@@ -51,7 +64,7 @@ const initialHistory: HistoryItem[] = [
   },
 ];
 
-const translationEngine = ref('PureTrans Verify v2');
+const translationEngine = ref('清译校验 v2');
 const isDark = ref(false);
 const inputMode = ref<InputMode>('voice');
 const isRecording = ref(false);
@@ -62,8 +75,20 @@ const draftText = ref('');
 const searchQuery = ref('');
 const historyDatabase = ref<HistoryItem[]>([...initialHistory]);
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
+const keyboardInset = ref(0);
+const keyboardListenerHandles: PluginListenerHandle[] = [];
 const pendingTimerIds: number[] = [];
 const recentItems = computed(() => historyDatabase.value.slice(0, 3));
+const baseContentBottomPadding = 'calc(env(safe-area-inset-bottom) + 8.5rem)';
+const textContentBottomPadding = 'calc(env(safe-area-inset-bottom) + 13rem)';
+const inputPanelBottom = computed(() => `${keyboardInset.value > 0 ? keyboardInset.value + 12 : 104}px`);
+const contentBottomPadding = computed(() => {
+  if (keyboardInset.value > 0) {
+    return `calc(env(safe-area-inset-bottom) + ${keyboardInset.value}px + 13rem)`;
+  }
+
+  return inputMode.value === 'text' ? textContentBottomPadding : baseContentBottomPadding;
+});
 
 const filteredHistory = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
@@ -78,6 +103,11 @@ const filteredHistory = computed(() => {
 
     return original.includes(query) || translated.includes(query);
   });
+});
+
+const accountLocation = computed(() => {
+  const segments = [props.currentUser?.city, props.currentUser?.province, props.currentUser?.country].filter(Boolean);
+  return segments.join(' · ');
 });
 
 const canSubmitText = computed(() => draftText.value.trim().length > 0);
@@ -109,6 +139,14 @@ function closeHistory(): void {
 
 function switchInputMode(mode: InputMode): void {
   inputMode.value = mode;
+
+  if (mode === 'voice') {
+    textareaRef.value?.blur();
+
+    if (Capacitor.getPlatform() === 'android') {
+      void CapacitorKeyboard.hide().catch(() => undefined);
+    }
+  }
 }
 
 function focusTextInput(): void {
@@ -141,6 +179,34 @@ function resetTextareaHeight(): void {
   textarea.style.height = `${Math.max(nextHeight, 44)}px`;
 }
 
+function applyKeyboardInset(height: number): void {
+  keyboardInset.value = Math.max(0, Math.round(height));
+}
+
+async function registerKeyboardListeners(): Promise<void> {
+  if (Capacitor.getPlatform() !== 'android') {
+    applyKeyboardInset(0);
+    return;
+  }
+
+  const handles = await Promise.all([
+    CapacitorKeyboard.addListener('keyboardWillShow', (info) => {
+      applyKeyboardInset(info.keyboardHeight);
+    }),
+    CapacitorKeyboard.addListener('keyboardDidShow', (info) => {
+      applyKeyboardInset(info.keyboardHeight);
+    }),
+    CapacitorKeyboard.addListener('keyboardWillHide', () => {
+      applyKeyboardInset(0);
+    }),
+    CapacitorKeyboard.addListener('keyboardDidHide', () => {
+      applyKeyboardInset(0);
+    }),
+  ]);
+
+  keyboardListenerHandles.push(...handles);
+}
+
 function buildMockTranslation(sourceText: string): string {
   const normalized = sourceText.trim();
   const lowerSource = normalized.toLowerCase();
@@ -162,14 +228,14 @@ function buildMockTranslation(sourceText: string): string {
   }
 
   if (/[\u4e00-\u9fa5]/.test(normalized)) {
-    return 'Context verified output with Xinjiang-localized terminology preserved.';
+    return '已完成语境校验，并保留新疆本地化术语。';
   }
 
   return '已完成语境审校，替换直译表达并补足专名信息。';
 }
 
 function isPendingHistory(item: HistoryItem): boolean {
-  return item.translated === '处理中...';
+  return item.translated === '处理中…';
 }
 
 function submitText(): void {
@@ -182,7 +248,7 @@ function submitText(): void {
   const placeholderHistory: HistoryItem = {
     id,
     original: sourceText,
-    translated: '处理中...',
+    translated: '处理中…',
   };
 
   historyDatabase.value = [placeholderHistory, ...historyDatabase.value];
@@ -218,11 +284,15 @@ function clearMockCache(): void {
   });
 }
 
+function logout(): void {
+  closeSettings();
+  emit('logout');
+}
+
 watch(inputMode, async (mode) => {
   if (mode === 'text') {
     await nextTick();
     resetTextareaHeight();
-    textareaRef.value?.focus();
     return;
   }
 
@@ -239,11 +309,15 @@ onMounted(() => {
   document.documentElement.classList.remove('dark');
   syncThemeClass();
   resetTextareaHeight();
+  void registerKeyboardListeners();
 });
 
 onBeforeUnmount(() => {
   pendingTimerIds.forEach((timerId) => window.clearTimeout(timerId));
   document.documentElement.classList.remove('dark');
+  keyboardListenerHandles.forEach((handle) => {
+    void handle.remove();
+  });
 });
 </script>
 
@@ -257,50 +331,44 @@ onBeforeUnmount(() => {
     <header
       class="fixed inset-x-0 top-0 z-30 border-b border-github-border/80 bg-github-canvas/92 px-4 pt-[env(safe-area-inset-top)] backdrop-blur dark:border-github-dark-border dark:bg-github-dark-canvas/92"
     >
-      <div class="mx-auto flex max-w-xl items-center justify-between gap-3 py-3">
+      <div class="relative mx-auto flex max-w-xl items-center justify-between py-3">
         <button
           type="button"
-          class="inline-flex h-10 shrink-0 items-center gap-2 rounded-xl border border-github-border bg-github-subtle px-3 text-sm font-medium text-github-muted transition hover:bg-github-accent/10 hover:text-github-fg dark:border-github-dark-border dark:bg-github-dark-subtle dark:text-github-dark-muted dark:hover:bg-github-dark-accent/10 dark:hover:text-github-dark-fg"
-          aria-label="Open history"
+          class="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-github-border bg-github-subtle text-github-muted transition hover:bg-github-accent/10 hover:text-github-fg dark:border-github-dark-border dark:bg-github-dark-subtle dark:text-github-dark-muted dark:hover:bg-github-dark-accent/10 dark:hover:text-github-dark-fg"
+          aria-label="打开记录"
           @click="openHistory"
         >
           <Clock class="size-[18px]" aria-hidden="true" />
-          <span>Recent</span>
         </button>
 
-        <div class="flex min-w-0 flex-1 items-center justify-center gap-2 slide-up">
+        <div class="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center slide-up">
           <div
-            class="inline-flex min-w-0 items-center gap-2 rounded-full border border-github-border bg-github-subtle px-3 py-2 text-sm shadow-sm dark:border-github-dark-border dark:bg-github-dark-subtle"
+            class="inline-flex min-w-0 items-center rounded-full border border-github-border bg-github-subtle px-4 py-2 text-sm shadow-sm dark:border-github-dark-border dark:bg-github-dark-subtle"
           >
-            <Braces class="size-4 shrink-0 text-github-accent dark:text-github-dark-accent" aria-hidden="true" />
             <span class="truncate font-semibold tracking-tight">PureTrans</span>
-          </div>
-          <div
-            class="inline-flex min-w-0 items-center gap-2 rounded-full border border-github-border bg-white px-3 py-2 text-[11px] font-medium uppercase tracking-[0.18em] text-github-muted shadow-sm dark:border-github-dark-border dark:bg-github-dark-canvas dark:text-github-dark-muted"
-          >
-            <Database class="size-3.5 shrink-0 text-github-accent dark:text-github-dark-accent" aria-hidden="true" />
-            <span class="truncate">Local RAG</span>
           </div>
         </div>
 
         <button
           type="button"
-          class="inline-flex size-10 items-center justify-center rounded-xl border border-github-border bg-github-subtle text-github-muted transition hover:bg-github-accent/10 hover:text-github-fg dark:border-github-dark-border dark:bg-github-dark-subtle dark:text-github-dark-muted dark:hover:bg-github-dark-accent/10 dark:hover:text-github-dark-fg"
-          :aria-label="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
-          @click="toggleTheme"
+          class="inline-flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-github-border bg-github-subtle text-github-muted transition hover:bg-github-accent/10 hover:text-github-fg dark:border-github-dark-border dark:bg-github-dark-subtle dark:text-github-dark-muted dark:hover:bg-github-dark-accent/10 dark:hover:text-github-dark-fg"
+          aria-label="打开用户页面"
+          @click="openSettings"
         >
-          <Sun v-if="isDark" class="size-[18px]" aria-hidden="true" />
-          <Moon v-else class="size-[18px]" aria-hidden="true" />
+          <img
+            v-if="props.currentUser?.avatarUrl"
+            :src="props.currentUser.avatarUrl"
+            :alt="props.currentUser.nickname"
+            class="size-full object-cover"
+          />
+          <UserRound v-else class="size-[18px]" aria-hidden="true" />
         </button>
       </div>
     </header>
 
     <section
-      :class="
-        inputMode === 'text'
-          ? 'mx-auto flex min-h-dvh max-w-xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+13.5rem)] pt-[calc(env(safe-area-inset-top)+5.5rem)]'
-          : 'mx-auto flex min-h-dvh max-w-xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+8.5rem)] pt-[calc(env(safe-area-inset-top)+5.5rem)]'
-      "
+      class="mx-auto flex min-h-dvh max-w-xl flex-col px-4 pt-[calc(env(safe-area-inset-top)+5.5rem)]"
+      :style="{ paddingBottom: contentBottomPadding }"
     >
       <div class="flex flex-1 flex-col gap-3 overflow-y-auto pb-6 pr-1 hide-scrollbar">
         <template v-if="recentItems.length">
@@ -314,7 +382,7 @@ onBeforeUnmount(() => {
               <span
                 v-if="isPendingHistory(item)"
                 class="size-2.5 rounded-full bg-amber-500 dark:bg-amber-400"
-                aria-label="Pending translation"
+                aria-label="翻译处理中"
               />
             </div>
 
@@ -334,7 +402,7 @@ onBeforeUnmount(() => {
           v-else
           class="flex flex-1 items-center justify-center rounded-[1.75rem] border border-dashed border-github-border bg-github-subtle px-6 text-center text-sm text-github-muted dark:border-github-dark-border dark:bg-github-dark-subtle dark:text-github-dark-muted"
         >
-          No recent history
+          暂无最近记录
         </div>
       </div>
     </section>
@@ -342,7 +410,8 @@ onBeforeUnmount(() => {
     <Transition name="slide-up-bottom">
       <div
         v-if="inputMode === 'text'"
-        class="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] z-20 px-4"
+        class="pointer-events-none fixed inset-x-0 z-20 px-4"
+        :style="{ bottom: inputPanelBottom }"
       >
         <div class="pointer-events-auto mx-auto max-w-xl">
           <div
@@ -354,14 +423,14 @@ onBeforeUnmount(() => {
                 v-model="draftText"
                 rows="1"
                 class="max-h-40 min-h-[44px] flex-1 resize-none border-0 bg-transparent px-3 py-2 text-sm leading-6 text-github-fg outline-none placeholder:text-github-muted dark:text-github-dark-fg dark:placeholder:text-github-dark-muted"
-                placeholder="Paste text for context-calibrated translation..."
+                placeholder="粘贴要做语境校验的文本…"
                 @keydown.enter.exact.prevent="submitText"
               />
               <button
                 type="button"
                 class="inline-flex size-11 shrink-0 items-center justify-center rounded-2xl bg-github-fg text-white transition disabled:cursor-not-allowed disabled:bg-github-muted/30 dark:bg-github-dark-fg dark:text-github-dark-canvas dark:disabled:bg-github-dark-muted/20"
                 :disabled="!canSubmitText"
-                aria-label="Send text"
+                aria-label="发送文本"
                 @click="submitText"
               >
                 <Send class="size-[18px]" aria-hidden="true" />
@@ -375,11 +444,14 @@ onBeforeUnmount(() => {
     <footer
       class="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-4 pt-3"
     >
-      <div class="pointer-events-auto mx-auto flex max-w-xl items-center gap-3 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+      <div
+        class="pointer-events-auto mx-auto flex max-w-xl items-center gap-3 rounded-[1.75rem] border border-github-border/80 bg-github-canvas/94 px-3 py-3 shadow-[0_-14px_30px_rgba(27,31,36,0.12)] backdrop-blur dark:border-github-dark-border dark:bg-github-dark-canvas/94 dark:shadow-[0_-18px_34px_rgba(1,4,9,0.42)]"
+        :class="inputMode === 'voice' ? 'pb-[max(0.9rem,env(safe-area-inset-bottom))]' : 'pb-[max(0.75rem,env(safe-area-inset-bottom))]'"
+      >
         <button
           type="button"
-          class="inline-flex size-12 shrink-0 items-center justify-center text-github-muted transition hover:text-github-fg dark:text-github-dark-muted dark:hover:text-github-dark-fg"
-          aria-label="Open settings"
+          class="inline-flex size-12 shrink-0 items-center justify-center rounded-2xl bg-github-subtle text-github-muted transition hover:bg-white hover:text-github-fg dark:bg-github-dark-subtle dark:text-github-dark-muted dark:hover:bg-github-dark-canvas dark:hover:text-github-dark-fg"
+          aria-label="打开设置"
           @click="openSettings"
         >
           <Settings class="size-5" aria-hidden="true" />
@@ -388,31 +460,54 @@ onBeforeUnmount(() => {
         <button
           v-if="inputMode === 'voice'"
           type="button"
-          class="relative flex h-14 min-w-0 flex-1 items-center justify-center overflow-hidden text-github-fg transition focus:outline-none dark:text-github-dark-fg"
+          class="no-callout group relative flex h-[4.5rem] min-w-0 flex-1 select-none touch-manipulation items-center justify-center overflow-hidden rounded-[1.65rem] border border-github-border/80 bg-white text-github-fg shadow-[0_12px_28px_rgba(27,31,36,0.12)] transition duration-200 active:scale-[0.985] focus:outline-none dark:border-github-dark-border dark:bg-github-dark-subtle dark:text-github-dark-fg dark:shadow-[0_12px_30px_rgba(1,4,9,0.32)]"
+          :class="
+            isRecording
+              ? 'border-github-accent/40 bg-github-accent/10 text-github-accent dark:border-github-dark-accent/50 dark:bg-github-dark-accent/16 dark:text-github-dark-accent'
+              : 'hover:border-github-border hover:bg-github-subtle dark:hover:border-github-dark-border dark:hover:bg-github-dark-canvas'
+          "
           :aria-pressed="isRecording"
-          aria-label="Hold to record"
-          @pointerdown="beginRecording"
-          @pointerup="endRecording"
-          @pointercancel="endRecording"
-          @pointerleave="endRecording"
+          aria-label="按住录音"
+          @contextmenu.prevent
+          @dragstart.prevent
+          @selectstart.prevent
+          @pointerdown.prevent="beginRecording"
+          @pointerup.prevent="endRecording"
+          @pointercancel.prevent="endRecording"
+          @pointerleave.prevent="endRecording"
         >
           <span
+            class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(9,105,218,0.12),transparent_62%)] opacity-80 dark:bg-[radial-gradient(circle_at_top,_rgba(56,139,253,0.16),transparent_58%)]"
+            aria-hidden="true"
+          />
+          <span
             v-if="isRecording"
-            class="pointer-events-none absolute inset-x-1/2 top-1/2 size-14 -translate-x-1/2 -translate-y-1/2 rounded-full wave-anim bg-github-accent/12 dark:bg-github-dark-accent/18"
+            class="pointer-events-none absolute inset-x-1/2 top-1/2 size-[4.25rem] -translate-x-1/2 -translate-y-1/2 rounded-full wave-anim bg-github-accent/12 dark:bg-github-dark-accent/18"
             aria-hidden="true"
           />
-          <Mic
-            class="relative z-[1] size-7"
-            :class="isRecording ? 'text-github-accent dark:text-github-dark-accent' : ''"
-            aria-hidden="true"
-          />
+          <span class="pointer-events-none relative z-[1] flex items-center gap-3 px-4">
+            <span
+              class="inline-flex size-12 items-center justify-center transition"
+              :class="isRecording ? 'scale-105' : 'group-active:scale-95'"
+            >
+              <Mic class="size-7" aria-hidden="true" />
+            </span>
+            <span class="flex flex-col items-start text-left">
+              <span class="text-[13px] font-semibold leading-5 tracking-tight">
+                {{ isRecording ? '正在录音…' : '按住说话' }}
+              </span>
+              <span class="text-[11px] leading-4 text-github-muted dark:text-github-dark-muted">
+                {{ isRecording ? '松开后结束' : '按住期间持续说话' }}
+              </span>
+            </span>
+          </span>
         </button>
 
         <button
           v-else
           type="button"
-          class="inline-flex h-12 min-w-0 flex-1 items-center justify-center text-github-muted transition hover:text-github-fg dark:text-github-dark-muted dark:hover:text-github-dark-fg"
-          aria-label="Focus text input"
+          class="inline-flex h-12 min-w-0 flex-1 items-center justify-center rounded-2xl bg-github-subtle text-github-muted transition hover:bg-white hover:text-github-fg dark:bg-github-dark-subtle dark:text-github-dark-muted dark:hover:bg-github-dark-canvas dark:hover:text-github-dark-fg"
+          aria-label="聚焦文本输入"
           @click="focusTextInput"
         >
           <Keyboard class="size-5" aria-hidden="true" />
@@ -420,8 +515,8 @@ onBeforeUnmount(() => {
 
         <button
           type="button"
-          class="inline-flex size-12 shrink-0 items-center justify-center text-github-muted transition hover:text-github-fg dark:text-github-dark-muted dark:hover:text-github-dark-fg"
-          :aria-label="inputMode === 'voice' ? 'Switch to text input' : 'Switch to voice input'"
+          class="inline-flex size-12 shrink-0 items-center justify-center rounded-2xl bg-github-subtle text-github-muted transition hover:bg-white hover:text-github-fg dark:bg-github-dark-subtle dark:text-github-dark-muted dark:hover:bg-github-dark-canvas dark:hover:text-github-dark-fg"
+          :aria-label="inputMode === 'voice' ? '切换到文本输入' : '切换到语音输入'"
           @click="switchInputMode(inputMode === 'voice' ? 'text' : 'voice')"
         >
           <Keyboard v-if="inputMode === 'voice'" class="size-5" aria-hidden="true" />
@@ -442,18 +537,18 @@ onBeforeUnmount(() => {
       <section
         v-if="isSettingsOpen"
         class="fixed inset-x-0 bottom-0 z-50 rounded-t-[1.75rem] border-t border-github-border bg-github-canvas px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4 shadow-[0_-18px_60px_rgba(27,31,36,0.24)] dark:border-github-dark-border dark:bg-github-dark-canvas"
-        aria-label="Settings panel"
+        aria-label="设置面板"
       >
         <div class="mx-auto max-w-xl">
           <div class="mb-4 flex items-center justify-between gap-3">
             <div class="inline-flex items-center gap-2">
               <SlidersHorizontal class="size-[18px] text-github-muted dark:text-github-dark-muted" aria-hidden="true" />
-              <h2 class="text-sm font-semibold text-github-fg dark:text-github-dark-fg">Settings</h2>
+              <h2 class="text-sm font-semibold text-github-fg dark:text-github-dark-fg">账号与设置</h2>
             </div>
             <button
               type="button"
               class="inline-flex size-9 items-center justify-center rounded-xl border border-github-border bg-github-subtle text-github-muted dark:border-github-dark-border dark:bg-github-dark-subtle dark:text-github-dark-muted"
-              aria-label="Close settings"
+              aria-label="关闭设置"
               @click="closeSettings"
             >
               <X class="size-4" aria-hidden="true" />
@@ -461,6 +556,57 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="space-y-2">
+            <div
+              v-if="props.currentUser"
+              class="flex items-center gap-3 rounded-2xl border border-github-border bg-white px-4 py-4 dark:border-github-dark-border dark:bg-github-dark-subtle"
+            >
+              <div
+                v-if="props.currentUser.avatarUrl"
+                class="size-11 overflow-hidden rounded-2xl border border-github-border bg-github-subtle dark:border-github-dark-border dark:bg-github-dark-canvas"
+              >
+                <img :src="props.currentUser.avatarUrl" :alt="props.currentUser.nickname" class="size-full object-cover" />
+              </div>
+              <div
+                v-else
+                class="inline-flex size-11 items-center justify-center rounded-2xl border border-github-border bg-github-subtle text-github-muted dark:border-github-dark-border dark:bg-github-dark-canvas dark:text-github-dark-muted"
+              >
+                <UserRound class="size-5" aria-hidden="true" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-medium text-github-fg dark:text-github-dark-fg">{{ props.currentUser.nickname }}</p>
+                <p class="truncate text-xs text-github-muted dark:text-github-dark-muted">
+                  {{ accountLocation || props.currentUser.openId }}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              class="flex w-full items-center gap-3 rounded-2xl border border-github-border bg-white px-4 py-4 text-left dark:border-github-dark-border dark:bg-github-dark-subtle"
+              @click="toggleTheme"
+            >
+              <div class="inline-flex size-10 items-center justify-center rounded-xl bg-github-subtle text-github-muted dark:bg-github-dark-canvas dark:text-github-dark-muted">
+                <Moon v-if="isDark" class="size-[18px]" aria-hidden="true" />
+                <Sun v-else class="size-[18px]" aria-hidden="true" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">界面主题</p>
+                <p class="text-xs text-github-muted dark:text-github-dark-muted">
+                  {{ isDark ? '深色模式已开启' : '浅色模式已开启' }}
+                </p>
+              </div>
+              <span
+                class="inline-flex h-7 w-12 items-center rounded-full p-1 transition"
+                :class="
+                  isDark
+                    ? 'bg-github-dark-fg justify-end'
+                    : 'bg-github-border dark:bg-github-dark-border'
+                "
+              >
+                <span class="size-5 rounded-full bg-white shadow-sm" />
+              </span>
+            </button>
+
             <button
               type="button"
               class="flex w-full items-center gap-3 rounded-2xl border border-github-border bg-white px-4 py-4 text-left dark:border-github-dark-border dark:bg-github-dark-subtle"
@@ -469,7 +615,7 @@ onBeforeUnmount(() => {
                 <Cpu class="size-[18px]" aria-hidden="true" />
               </div>
               <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">Translation Engine</p>
+                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">翻译引擎</p>
                 <p class="truncate text-xs text-github-muted dark:text-github-dark-muted">{{ translationEngine }}</p>
               </div>
               <ChevronRight class="size-4 shrink-0 text-github-muted dark:text-github-dark-muted" aria-hidden="true" />
@@ -484,9 +630,9 @@ onBeforeUnmount(() => {
                 <Database class="size-[18px]" aria-hidden="true" />
               </div>
               <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">RAG Knowledge Base</p>
+                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">本地知识库</p>
                 <p class="text-xs text-github-muted dark:text-github-dark-muted">
-                  {{ isRagEnabled ? 'Enabled for terminology calibration' : 'Disabled for mock review' }}
+                  {{ isRagEnabled ? '已用于术语校准与本地知识检索' : '当前已关闭，仅保留模拟审校' }}
                 </p>
               </div>
               <span
@@ -510,8 +656,24 @@ onBeforeUnmount(() => {
                 <Trash2 class="size-[18px]" aria-hidden="true" />
               </div>
               <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">Clear Cache</p>
-                <p class="text-xs text-github-muted dark:text-github-dark-muted">Reset mock records and history</p>
+                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">清空缓存</p>
+                <p class="text-xs text-github-muted dark:text-github-dark-muted">重置当前模拟记录与历史</p>
+              </div>
+              <ChevronRight class="size-4 shrink-0 text-github-muted dark:text-github-dark-muted" aria-hidden="true" />
+            </button>
+
+            <button
+              v-if="props.currentUser"
+              type="button"
+              class="flex w-full items-center gap-3 rounded-2xl border border-github-border bg-white px-4 py-4 text-left dark:border-github-dark-border dark:bg-github-dark-subtle"
+              @click="logout"
+            >
+              <div class="inline-flex size-10 items-center justify-center rounded-xl bg-github-subtle text-github-muted dark:bg-github-dark-canvas dark:text-github-dark-muted">
+                <LogOut class="size-[18px]" aria-hidden="true" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-medium text-github-fg dark:text-github-dark-fg">退出登录</p>
+                <p class="text-xs text-github-muted dark:text-github-dark-muted">从当前设备移除本地清译会话</p>
               </div>
               <ChevronRight class="size-4 shrink-0 text-github-muted dark:text-github-dark-muted" aria-hidden="true" />
             </button>
@@ -524,22 +686,22 @@ onBeforeUnmount(() => {
       <section
         v-if="isHistoryOpen"
         class="fixed inset-0 z-[60] flex min-h-dvh flex-col bg-github-canvas px-4 pt-[env(safe-area-inset-top)] dark:bg-github-dark-canvas"
-        aria-label="Translation history"
+        aria-label="翻译记录"
       >
         <div class="mx-auto flex w-full max-w-xl flex-1 flex-col">
           <div class="flex items-center gap-3 border-b border-github-border py-3 dark:border-github-dark-border">
             <button
               type="button"
               class="inline-flex size-10 items-center justify-center rounded-xl border border-github-border bg-github-subtle text-github-muted dark:border-github-dark-border dark:bg-github-dark-subtle dark:text-github-dark-muted"
-              aria-label="Close history"
+              aria-label="关闭记录"
               @click="closeHistory"
             >
               <ChevronLeft class="size-[18px]" aria-hidden="true" />
             </button>
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-semibold text-github-fg dark:text-github-dark-fg">History</p>
+              <p class="text-sm font-semibold text-github-fg dark:text-github-dark-fg">翻译记录</p>
               <p class="text-xs text-github-muted dark:text-github-dark-muted">
-                {{ filteredHistory.length }} records
+                {{ filteredHistory.length }} 条记录
               </p>
             </div>
           </div>
@@ -553,7 +715,7 @@ onBeforeUnmount(() => {
                 v-model="searchQuery"
                 type="search"
                 class="w-full border-0 bg-transparent text-sm text-github-fg outline-none placeholder:text-github-muted dark:text-github-dark-fg dark:placeholder:text-github-dark-muted"
-                placeholder="Search original or translated text"
+                placeholder="搜索原文或译文"
               />
             </label>
           </div>
@@ -569,7 +731,7 @@ onBeforeUnmount(() => {
                   <span
                     v-if="isPendingHistory(item)"
                     class="size-2.5 rounded-full bg-amber-500 dark:bg-amber-400"
-                    aria-label="Pending translation"
+                    aria-label="翻译处理中"
                   />
                 </div>
                 <p class="mt-3 text-base font-semibold leading-7 text-github-fg dark:text-github-dark-fg">{{ item.translated }}</p>
@@ -585,9 +747,9 @@ onBeforeUnmount(() => {
             >
               <Inbox class="size-8 text-github-muted dark:text-github-dark-muted" aria-hidden="true" />
               <div>
-                <p class="text-sm font-semibold text-github-fg dark:text-github-dark-fg">No matching history</p>
+                <p class="text-sm font-semibold text-github-fg dark:text-github-dark-fg">没有匹配的记录</p>
                 <p class="mt-1 text-xs text-github-muted dark:text-github-dark-muted">
-                  Try another keyword or add a new mock translation.
+                  换个关键词，或先新增一条模拟翻译。
                 </p>
               </div>
             </div>
