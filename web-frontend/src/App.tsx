@@ -21,7 +21,7 @@ const tabs: TabItem<ActiveTab>[] = [
 function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('kb');
   const [backendStatus, setBackendStatus] = useState<BackendStatus>('checking');
-  const apiBaseUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000', []);
+  const apiBaseUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://124.71.228.242:8000', []);
 
   useEffect(() => {
     let active = true;

@@ -3,7 +3,7 @@ import axios from 'axios';
 import type { ApiResponse } from '../types/api';
 
 export const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://124.71.228.242:8000',
   timeout: 120000,
 });
 

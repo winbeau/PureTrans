@@ -9,7 +9,7 @@ pnpm install
 pnpm dev -- --host 0.0.0.0
 ```
 
-By default the app calls `http://localhost:8000`. To override it:
+By default the app calls `http://124.71.228.242:8000`. To override it:
 
 ```bash
 cp .env.example .env
