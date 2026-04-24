@@ -13,5 +13,6 @@ frontend/android/captures/
 
 backend/.env.local
 backend/.env.production.local
+backend/**/__pycache__/
 
 .DS_Store
